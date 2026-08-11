@@ -78,17 +78,25 @@ let cur   = STUDENTS[0].id;
 let STATE = { progress:[], assignments:[] };
 
 /* ---------------- api ---------------- */
+function safeJSON(t){
+  try{ return JSON.parse(t); }
+  catch(e){ return {ok:false, error:'Google sent back an error page instead of data. This happens occasionally \u2014 press the button again.'}; }
+}
 async function post(payload){
-  const r = await fetch(API,{
-    method:'POST',
-    headers:{'Content-Type':'text/plain;charset=utf-8'},
-    body: JSON.stringify(Object.assign({key:KEY}, payload))
-  });
-  return r.json();
+  try{
+    const r = await fetch(API,{
+      method:'POST',
+      headers:{'Content-Type':'text/plain;charset=utf-8'},
+      body: JSON.stringify(Object.assign({key:KEY}, payload))
+    });
+    return safeJSON(await r.text());
+  }catch(e){ return {ok:false, error:'Network error: '+e.message}; }
 }
 async function get(qs){
-  const r = await fetch(API+'?key='+encodeURIComponent(KEY)+'&'+qs);
-  return r.json();
+  try{
+    const r = await fetch(API+'?key='+encodeURIComponent(KEY)+'&'+qs);
+    return safeJSON(await r.text());
+  }catch(e){ return {ok:false, error:'Network error: '+e.message}; }
 }
 
 /* ---------------- helpers ---------------- */
@@ -143,12 +151,10 @@ async function saveKey(){
   if(!v) return;
   KEY = v;
   say('busy','Checking…');
-  try{
-    const r = await get('action=ping');
-    if(!r.ok){ say('err','That secret was rejected.'); return; }
-    localStorage.setItem(KEYSTORE, v);
-    boot();
-  }catch(e){ say('err','Could not reach the backend: '+e.message); }
+  const r = await get('action=ping');
+  if(!r.ok){ say('err', r.error==='unauthorized' ? 'That secret was rejected.' : (r.error||'Could not reach the backend.')); return; }
+  localStorage.setItem(KEYSTORE, v);
+  boot();
 }
 function forgetKey(){
   if(!confirm('Forget the secret on this device?')) return;
@@ -185,13 +191,11 @@ function pick(id){ cur = id; tabs(); render(); }
 
 async function refresh(){
   say('busy','Loading from Google Sheet…');
-  try{
-    const r = await get('action=state');
-    if(!r.ok){ say('err', r.error || 'Failed'); return; }
-    STATE = r;
-    say('ok','Up to date');
-    render();
-  }catch(e){ say('err','Network error: '+e.message); }
+  const r = await get('action=state');
+  if(!r.ok){ say('err', r.error || 'Failed'); return; }
+  STATE = r;
+  say('ok','Up to date');
+  render();
 }
 
 /* ---------------- render ---------------- */
