@@ -399,6 +399,21 @@ function lev(a,b){const m=[];for(let i=0;i<=b.length;i++)m[i]=[i];for(let j=0;j<
 function checkTyped(u,t){const a=norm(u),b=norm(t);if(!a)return 'no';if(a===b)return 'yes';
   return lev(a,b)<=(b.length>6?2:1)?'close':'no';}
 
+function dueYMD(due){
+  if(!due) return null;
+  const t = String(due);
+  const plain = t.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if(plain) return [ +plain[1], +plain[2]-1, +plain[3] ];
+  const d = new Date(t);
+  if(isNaN(d.getTime())) return null;
+  return [ d.getFullYear(), d.getMonth(), d.getDate() ];
+}
+function dueLabel(due){
+  const p = dueYMD(due);
+  if(!p) return '';
+  return p[0]+'-'+String(p[1]+1).padStart(2,'0')+'-'+String(p[2]).padStart(2,'0');
+}
+
 let openTaskId = null;
 
 function myTasks(){ return STATE.assignments.filter(a => a.type==='task' && String(a.student)===cur); }
@@ -454,7 +469,7 @@ WRITE Describe your weekend in five sentences."></textarea>
         : `<span style="color:var(--dim)">not submitted</span>`;
       return `<div class="row"><div style="flex:1">
         <div class="w">${esc(t.w||'Assignment')}</div>
-        <div class="t">${t.tr?('due '+esc(t.tr)+' · '):''}${taskQuestions(parseTask(t.note||'')).length} questions</div>
+        <div class="t">${dueLabel(t.tr)?('due '+esc(dueLabel(t.tr))+' · '):''}${taskQuestions(parseTask(t.note||'')).length} questions</div>
       </div><div class="sp">${st}
         <button class="btn sec sm" onclick="openTaskId='${t.id}';render()">Open</button>
         <button class="btn ghost sm" onclick="del('${t.id}')">Delete</button>
@@ -526,7 +541,7 @@ async function sendTask(){
   if(bad && !confirm(bad+' multiple-choice question(s) have no * on the correct option. They cannot be auto-checked. Send anyway?')) return;
   say('busy','Sending assignment…');
   const r = await post({action:'assign', student:cur, items:[{type:'task', w:title, tr:due, note:body}]});
-  if(!r.ok){ say('err', r.error||'Failed'); return; }
+  if(!r.ok){ say('err', (r.error||'Failed')+' — check the Sent list below before resending; it may have gone through anyway.'); await refresh(); return; }
   $('tTitle').value=''; $('tBody').value=''; $('tDue').value='';
   $('tPrev').innerHTML='';
   say('ok','Assignment sent. It appears on their phone next time they open the app.');
