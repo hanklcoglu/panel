@@ -335,6 +335,16 @@ function parseTask(body){
       continue;
     }
 
+    if(/^GAP!\s+/i.test(line)){
+      const rest = line.replace(/^GAP!\s+/i,'');
+      const bar = rest.lastIndexOf('|');
+      const sentence = (bar > -1 ? rest.slice(0,bar) : rest).trim();
+      const answers = (bar > -1 ? rest.slice(bar+1) : '').split('/').map(s=>s.trim()).filter(Boolean);
+      items.push({ kind:'gap', id:'q'+(++n), q: sentence, answers: answers, strict: true });
+      i++;
+      continue;
+    }
+
     if(/^GAP\s+/i.test(line)){
       const rest = line.replace(/^GAP\s+/i,'');
       const bar = rest.lastIndexOf('|');
@@ -372,6 +382,10 @@ function gradeItem(it, ans){
   if(it.kind === 'gap'){
     if(!ans) return false;
     if(!it.answers || !it.answers.length) return null;
+    if(it.strict){
+      const tidy = function(s){ return String(s||'').trim().replace(/\s+/g,' '); };
+      return it.answers.some(function(a){ return tidy(ans) === tidy(a); });
+    }
     return it.answers.some(function(a){ return checkTyped(ans, a) !== 'no'; });
   }
   return null;
@@ -452,6 +466,7 @@ WRITE Describe your weekend in five sentences."></textarea>
       <code>TEXT</code> … <code>END</code> a passage &nbsp;·&nbsp;
       <code>Q</code> question, then options as <code>-</code> wrong and <code>*</code> correct &nbsp;·&nbsp;
       <code>GAP</code> sentence with <code>___</code> then <code>|</code> answer (use <code>/</code> for alternatives) &nbsp;·&nbsp;
+      <code>GAP!</code> same, but marked <b style="color:var(--txt)">exactly</b> — accents and case count &nbsp;·&nbsp;
       <code>WRITE</code> a prompt you'll read yourself.</div>
     <div style="display:flex;gap:8px">
       <button class="btn" onclick="sendTask()">Send assignment</button>
