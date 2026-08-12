@@ -48,6 +48,14 @@ code{background:var(--card2);padding:1px 5px;border-radius:5px;font-size:12px}
 .row .w{font-weight:650} .row .t{font-size:12.5px;color:var(--dim)}
 .row .sp{margin-left:auto;display:flex;gap:6px;align-items:center}
 .dots{display:flex;gap:3px}.dot{width:7px;height:7px;border-radius:9px;background:var(--line)}.dot.on{background:var(--ok)}
+
+.passage{background:var(--card2);border-radius:11px;padding:13px;font-size:13.5px;line-height:1.7;
+  white-space:pre-wrap;margin-bottom:10px;color:var(--txt)}
+.qb{background:var(--card2);border-radius:11px;padding:11px 13px;margin-bottom:8px;border-left:3px solid var(--line)}
+.qb.wrong{border-left-color:var(--bad)}
+.qhead{font-weight:650;font-size:13.5px;margin-bottom:7px;line-height:1.5}
+.ans{font-size:13px;margin-top:3px}
+.ans .lbl{display:inline-block;min-width:78px;color:var(--dim);font-size:11.5px}
 .msg{padding:10px 13px;border-radius:10px;margin:10px 0;font-size:13.5px;display:none}
 .msg.ok{background:rgba(52,211,153,.13);color:var(--ok);display:block}
 .msg.err{background:rgba(251,113,133,.13);color:var(--bad);display:block}
@@ -202,7 +210,7 @@ async function refresh(){
 function render(){
   const s  = STUDENTS.find(x=>x.id===cur);
   const pr = STATE.progress.find(p=>String(p.student)===cur);
-  const mine = STATE.assignments.filter(a=>String(a.student)===cur);
+  const mine = STATE.assignments.filter(a=>String(a.student)===cur && a.type!=='task');
   const words = mine.filter(a=>a.type!=='note');
   const notes = mine.filter(a=>a.type==='note');
 
@@ -245,6 +253,8 @@ function render(){
     </div>
   </div>
 
+  ${tasksSection()}
+
   <h2>Assigned so far — ${words.length} words${notes.length?', '+notes.length+' notes':''}</h2>
   <div class="card">
     ${ mine.length ? mine.map(a=>rowHTML(a)).join('') : '<div class="empty">Nothing assigned yet. The starter deck is built into their app.</div>' }
@@ -282,6 +292,245 @@ function rowHTML(a){
       <button class="btn sec sm" onclick="edit('${a.id}')">Edit</button>
       <button class="btn ghost sm" onclick="del('${a.id}')">Delete</button>
     </div></div>`;
+}
+
+/* ================= assignments: shared parser + scoring ================= */
+/* Markup:
+     TEXT ... END          reading passage
+     Q question            multiple choice; options on following lines
+       - wrong             (- wrong, * correct)
+       * right
+     GAP sentence with ___ | answer            typed answer, / separates alternatives
+     WRITE prompt                              free writing, not auto-scored
+   Blank lines are ignored outside TEXT blocks.                                */
+
+function parseTask(body){
+  const lines = String(body||'').replace(/\r/g,'').split('\n');
+  const items = [];
+  let i = 0, n = 0;
+  while(i < lines.length){
+    const raw = lines[i], line = raw.trim();
+
+    if(/^TEXT\b/i.test(line)){
+      const buf = [];
+      i++;
+      while(i < lines.length && !/^END\b/i.test(lines[i].trim())){ buf.push(lines[i]); i++; }
+      i++;
+      items.push({ kind:'text', body: buf.join('\n').trim() });
+      continue;
+    }
+
+    if(/^Q\s+/i.test(line)){
+      const q = { kind:'mc', id:'q'+(++n), q: line.replace(/^Q\s+/i,'').trim(), opts:[], answer:-1 };
+      i++;
+      while(i < lines.length){
+        const o = lines[i].trim();
+        if(/^[-*]\s+/.test(o)){
+          if(o.charAt(0) === '*') q.answer = q.opts.length;
+          q.opts.push(o.replace(/^[-*]\s+/,'').trim());
+          i++;
+        } else break;
+      }
+      items.push(q);
+      continue;
+    }
+
+    if(/^GAP\s+/i.test(line)){
+      const rest = line.replace(/^GAP\s+/i,'');
+      const bar = rest.lastIndexOf('|');
+      const sentence = (bar > -1 ? rest.slice(0,bar) : rest).trim();
+      const answers = (bar > -1 ? rest.slice(bar+1) : '').split('/').map(s=>s.trim()).filter(Boolean);
+      items.push({ kind:'gap', id:'q'+(++n), q: sentence, answers: answers });
+      i++;
+      continue;
+    }
+
+    if(/^WRITE\s+/i.test(line)){
+      items.push({ kind:'write', id:'q'+(++n), q: line.replace(/^WRITE\s+/i,'').trim() });
+      i++;
+      continue;
+    }
+
+    i++;
+  }
+  return items;
+}
+
+function taskQuestions(items){
+  return items.filter(function(it){ return it.kind !== 'text'; });
+}
+function taskAutoMax(items){
+  return items.filter(function(it){ return it.kind === 'mc' || it.kind === 'gap'; }).length;
+}
+
+/* Grades one answer. Returns true / false / null (null = needs a human). */
+function gradeItem(it, ans){
+  if(it.kind === 'mc'){
+    if(ans === undefined || ans === null || ans === '') return false;
+    return Number(ans) === Number(it.answer);
+  }
+  if(it.kind === 'gap'){
+    if(!ans) return false;
+    if(!it.answers || !it.answers.length) return null;
+    return it.answers.some(function(a){ return checkTyped(ans, a) !== 'no'; });
+  }
+  return null;
+}
+
+function scoreTask(items, answers){
+  let score = 0, max = 0;
+  taskQuestions(items).forEach(function(it){
+    const g = gradeItem(it, answers ? answers[it.id] : undefined);
+    if(g === null) return;
+    max++;
+    if(g) score++;
+  });
+  return { score: score, max: max };
+}
+
+
+/* ---------------- assignments ---------------- */
+const norm = s => String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+  .replace(/\u0131/g,'i').trim().replace(/[.,!?;:"']/g,'').replace(/\s+/g,' ');
+function lev(a,b){const m=[];for(let i=0;i<=b.length;i++)m[i]=[i];for(let j=0;j<=a.length;j++)m[0][j]=j;
+  for(let i=1;i<=b.length;i++)for(let j=1;j<=a.length;j++)
+    m[i][j]=b[i-1]===a[j-1]?m[i-1][j-1]:Math.min(m[i-1][j-1]+1,m[i][j-1]+1,m[i-1][j]+1);
+  return m[b.length][a.length];}
+function checkTyped(u,t){const a=norm(u),b=norm(t);if(!a)return 'no';if(a===b)return 'yes';
+  return lev(a,b)<=(b.length>6?2:1)?'close':'no';}
+
+let openTaskId = null;
+
+function myTasks(){ return STATE.assignments.filter(a => a.type==='task' && String(a.student)===cur); }
+function submissionsFor(student){
+  const p = STATE.progress.find(x => String(x.student)===student);
+  return (p && p.payload && p.payload.tasks) || {};
+}
+
+function tasksSection(){
+  const tasks = myTasks(), subs = submissionsFor(cur);
+  if(openTaskId){
+    const t = tasks.find(x => String(x.id)===String(openTaskId));
+    if(t) return taskDetail(t, subs[t.id]);
+    openTaskId = null;
+  }
+  return `
+  <h2>Assignments</h2>
+  <div class="card">
+    <div style="display:flex;gap:10px;margin-bottom:10px">
+      <input type="text" id="tTitle" placeholder="Title, e.g. Reading: a day at the market" style="flex:2">
+      <input type="date" id="tDue" style="flex:1">
+    </div>
+    <textarea id="tBody" style="min-height:190px" placeholder="TEXT
+Ali went to the market yesterday. He bought bread and cheese.
+END
+
+Q What did Ali buy?
+- meat
+* bread and cheese
+- nothing
+
+GAP I ___ to school yesterday. | went
+
+WRITE Describe your weekend in five sentences."></textarea>
+    <div class="note"><b style="color:var(--txt)">Format</b> &nbsp;
+      <code>TEXT</code> … <code>END</code> a passage &nbsp;·&nbsp;
+      <code>Q</code> question, then options as <code>-</code> wrong and <code>*</code> correct &nbsp;·&nbsp;
+      <code>GAP</code> sentence with <code>___</code> then <code>|</code> answer (use <code>/</code> for alternatives) &nbsp;·&nbsp;
+      <code>WRITE</code> a prompt you'll read yourself.</div>
+    <div style="display:flex;gap:8px">
+      <button class="btn" onclick="sendTask()">Send assignment</button>
+      <button class="btn sec" onclick="previewTask()">Preview</button>
+    </div>
+    <div id="tPrev"></div>
+  </div>
+
+  <h2>Sent — ${tasks.length}</h2>
+  <div class="card">
+    ${tasks.length ? tasks.map(t=>{
+      const sub = subs[t.id];
+      const st = sub && sub.submittedAt
+        ? `<span style="color:var(--ok);font-weight:650">${sub.score}/${sub.max}</span>`
+        : `<span style="color:var(--dim)">not submitted</span>`;
+      return `<div class="row"><div style="flex:1">
+        <div class="w">${esc(t.w||'Assignment')}</div>
+        <div class="t">${t.tr?('due '+esc(t.tr)+' · '):''}${taskQuestions(parseTask(t.note||'')).length} questions</div>
+      </div><div class="sp">${st}
+        <button class="btn sec sm" onclick="openTaskId='${t.id}';render()">Open</button>
+        <button class="btn ghost sm" onclick="del('${t.id}')">Delete</button>
+      </div></div>`;
+    }).join('') : '<div class="empty">Nothing sent yet.</div>'}
+  </div>`;
+}
+
+function taskDetail(t, sub){
+  const items = parseTask(t.note||'');
+  let qi = 0;
+  const rows = items.map(function(it){
+    if(it.kind==='text') return `<div class="passage">${esc(it.body)}</div>`;
+    qi++;
+    const a = sub && sub.answers ? sub.answers[it.id] : undefined;
+    const g = gradeItem(it, a);
+    const badge = g===true ? '<span style="color:var(--ok)">correct</span>'
+               : g===false ? '<span style="color:var(--bad)">wrong</span>'
+               : '<span style="color:var(--gold)">for you to read</span>';
+    let shown = '—', want = '';
+    if(it.kind==='mc'){
+      shown = (a===undefined||a===null||a==='') ? '—' : esc(it.opts[Number(a)] || String(a));
+      want = esc(it.opts[it.answer]||'');
+    } else if(it.kind==='gap'){
+      shown = a ? esc(a) : '—';
+      want = esc((it.answers||[]).join(' / '));
+    } else {
+      shown = a ? esc(a) : '—';
+    }
+    return `<div class="qb${g===false?' wrong':''}">
+      <div class="qhead">${qi}. ${esc(it.kind==='gap' ? it.q : it.q)} &nbsp;${badge}</div>
+      <div class="ans"><span class="lbl">answered</span>${shown}</div>
+      ${want ? `<div class="ans"><span class="lbl">expected</span>${want}</div>` : ''}
+    </div>`;
+  }).join('');
+
+  return `
+  <h2><button class="btn ghost sm" onclick="openTaskId=null;render()">← back</button>
+    &nbsp; ${esc(t.w||'Assignment')}</h2>
+  <div class="card">
+    ${sub && sub.submittedAt
+      ? `<div class="stats"><div class="stat"><b>${sub.score}/${sub.max}</b><span>auto-checked</span></div>
+         <div class="stat"><b>${taskQuestions(items).length}</b><span>questions</span></div>
+         <div class="stat"><b>${ago(sub.submittedAt)}</b><span>submitted</span></div></div>`
+      : '<div class="empty">Not submitted yet.</div>'}
+    ${rows}
+  </div>`;
+}
+
+function previewTask(){
+  const items = parseTask($('tBody').value);
+  const qn = taskQuestions(items).length, auto = taskAutoMax(items);
+  const bad = items.filter(i=>i.kind==='mc' && i.answer<0).length;
+  $('tPrev').innerHTML = `<div class="note" style="margin-top:12px">
+    ${items.filter(i=>i.kind==='text').length} passage(s) · ${qn} questions · ${auto} auto-checked
+    ${bad ? `<br><span style="color:var(--bad)">${bad} multiple-choice question(s) have no <code>*</code> marking the correct option.</span>` : ''}
+    ${qn===0 ? '<br><span style="color:var(--bad)">No questions found — check the format.</span>' : ''}
+  </div>`;
+}
+
+async function sendTask(){
+  const title = $('tTitle').value.trim();
+  const due = $('tDue').value;
+  const body = $('tBody').value;
+  const items = parseTask(body);
+  if(!title){ say('err','Give the assignment a title.'); return; }
+  if(!taskQuestions(items).length){ say('err','No questions found. Check the format.'); return; }
+  const bad = items.filter(i=>i.kind==='mc' && i.answer<0).length;
+  if(bad && !confirm(bad+' multiple-choice question(s) have no * on the correct option. They cannot be auto-checked. Send anyway?')) return;
+  say('busy','Sending assignment…');
+  const r = await post({action:'assign', student:cur, items:[{type:'task', w:title, tr:due, note:body}]});
+  if(!r.ok){ say('err', r.error||'Failed'); return; }
+  $('tTitle').value=''; $('tBody').value=''; $('tDue').value='';
+  $('tPrev').innerHTML='';
+  say('ok','Assignment sent. It appears on their phone next time they open the app.');
+  await refresh();
 }
 
 /* ---------------- actions ---------------- */
