@@ -107,6 +107,21 @@ async function get(qs){
   }catch(e){ return {ok:false, error:'Network error: '+e.message}; }
 }
 
+const PUSH_API = 'https://push.kadirhankilicoglu01.workers.dev';
+
+/* Fire-and-forget: a push failing must never make a successful send look failed. */
+async function ping(student, kind, extra){
+  try{
+    const r = await fetch(PUSH_API + '/notify', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(Object.assign({ key: KEY, student: student, kind: kind }, extra || {}))
+    });
+    const d = await r.json();
+    return (d && d.ok) ? (d.sent || 0) : 0;
+  }catch(e){ return 0; }
+}
+const pushNote = n => n ? ' \u00b7 notified' : '';
+
 /* ---------------- helpers ---------------- */
 const esc = s => String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const $ = id => document.getElementById(id);
@@ -559,7 +574,8 @@ async function sendTask(){
   if(!r.ok){ say('err', (r.error||'Failed')+' — check the Sent list below before resending; it may have gone through anyway.'); await refresh(); return; }
   $('tTitle').value=''; $('tBody').value=''; $('tDue').value='';
   $('tPrev').innerHTML='';
-  say('ok','Assignment sent. It appears on their phone next time they open the app.');
+  const n = await ping(cur, 'task', { title: title });
+  say('ok','Assignment sent.' + (n ? ' Their phone has been notified.' : ' It appears on their phone next time they open the app.'));
   await refresh();
 }
 
@@ -571,7 +587,8 @@ async function sendWords(){
   const r = await post({action:'assign', student:cur, items:items});
   if(!r.ok){ say('err', r.error||'Failed'); return; }
   $('wIn').value='';
-  say('ok', r.added+' words sent. They will appear next time the app is opened.');
+  const n = await ping(cur, 'words', { count: r.added || items.length });
+  say('ok', r.added+' words sent. They will appear next time the app is opened.' + pushNote(n));
   await refresh();
 }
 
@@ -582,7 +599,8 @@ async function sendNote(){
   const r = await post({action:'assign', student:cur, items:[{type:'note', note:t}]});
   if(!r.ok){ say('err', r.error||'Failed'); return; }
   $('nIn').value='';
-  say('ok','Note sent.');
+  const n = await ping(cur, 'note');
+  say('ok','Note sent.' + pushNote(n));
   await refresh();
 }
 
