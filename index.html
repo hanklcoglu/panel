@@ -62,6 +62,21 @@ code{background:var(--card2);padding:1px 5px;border-radius:5px;font-size:12px}
 .msg.busy{background:var(--card2);color:var(--dim);display:block}
 .pill{font-size:11px;padding:2px 8px;border-radius:99px;background:var(--card);color:var(--dim);border:1px solid var(--line)}
 .empty{color:var(--dim);font-size:13px;padding:10px 2px}
+.wchips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+.wchip{padding:6px 11px;border-radius:99px;background:var(--card2);border:1px solid var(--line);
+  color:var(--dim);font-size:12.5px}
+.wchip b{color:var(--txt);margin-left:2px}
+.wchip.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.wchip.on b{color:#fff}
+.wtools{display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap}
+.wtools input{flex:1;min-width:130px;padding:8px 11px;border-radius:9px;background:var(--card2);
+  border:1px solid var(--line);color:var(--txt);font:inherit;font-size:13px;outline:none}
+.wtools input:focus{border-color:var(--accent)}
+.wsorts{display:flex;gap:4px}
+.wsort{padding:7px 10px;border-radius:9px;background:var(--card2);border:1px solid var(--line);
+  color:var(--dim);font-size:12px}
+.wsort.on{background:var(--card);border-color:var(--accent2);color:var(--accent2)}
+.wlist{max-height:460px;overflow-y:auto;padding-right:4px}
 .setup{max-width:440px;margin:80px auto;text-align:center}
 .hide{display:none!important}
 .spin{display:inline-block;width:13px;height:13px;border:2px solid var(--line);
@@ -262,7 +277,7 @@ function render(){
             <div class="stat"><b>${pr.deck||0}</b><span>words</span></div>
           </div>
           <div class="note">Last practised: <b style="color:var(--txt)">${ago(pr.updatedAt)}</b></div>
-          ${weakest(pr)}
+          ${wordsSection(pr)}
         ` : `<div class="empty">No data yet. It appears the first time they open the app after you send them their link.</div>`}
       </div>
     </div>
@@ -276,21 +291,93 @@ function render(){
   </div>`;
 }
 
-function weakest(pr){
+/* ---------------- their whole vocabulary ---------------- */
+
+let WORD_FILTER = 'all';    /* all | weak | mid | solid | new */
+let WORD_SORT   = 'weak';   /* weak | az | wrong */
+let WORD_Q      = '';
+
+/* Box 0-1 is shaky, 2-3 is on its way, 4-5 is holding. */
+function band(r){
+  if(!r.seen) return 'new';
+  if(r.box <= 1) return 'weak';
+  if(r.box <= 3) return 'mid';
+  return 'solid';
+}
+
+function wordRows(pr){
   const p = pr.payload || {};
   const words = p.words || {};
   const deck  = p.deck  || [];
-  if(!deck.length) return '';
-  const rows = deck.map(d=>{
+  return deck.map(function(d){
     const st = words[d.w] || {};
-    return { w:d.w, tr:d.tr, box:st.box||0, seen:st.seen||0, wrong:st.wrong||0 };
-  }).filter(r=>r.seen>0).sort((a,b)=>a.box-b.box || b.wrong-a.wrong).slice(0,12);
-  if(!rows.length) return '<div class="empty">No words practised yet.</div>';
-  return `<div style="margin-top:12px"><div class="note">Weakest — review these in the lesson</div>${
-    rows.map(r=>`<div class="row"><div><div class="w">${esc(r.w)}</div>
-      <div class="t">${esc(r.tr)} · ${r.wrong} wrong / ${r.seen} tries</div></div>
-      <div class="sp"><div class="dots">${[1,2,3,4,5].map(i=>`<div class="dot ${r.box>=i?'on':''}"></div>`).join('')}</div></div></div>`).join('')
-  }</div>`;
+    const seen = st.seen || 0, wrong = st.wrong || 0;
+    return {
+      w: d.w, tr: d.tr || '',
+      box: st.box || 0, seen: seen, wrong: wrong,
+      pct: seen ? Math.round((seen - wrong) / seen * 100) : null
+    };
+  });
+}
+
+function setWordFilter(v){ WORD_FILTER = v; render(); }
+function setWordSort(v){ WORD_SORT = v; render(); }
+function onWordSearch(v){
+  WORD_Q = v;
+  render();
+  const el = $('wq');
+  if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+}
+
+function wordsSection(pr){
+  const all = wordRows(pr);
+  if(!all.length) return '<div class="empty">No words synced yet. They appear once the student opens the app.</div>';
+
+  const counts = { all: all.length, weak:0, mid:0, solid:0, new:0 };
+  all.forEach(function(r){ counts[band(r)]++; });
+
+  let rows = all.slice();
+  if(WORD_FILTER !== 'all') rows = rows.filter(function(r){ return band(r) === WORD_FILTER; });
+  if(WORD_Q){
+    const q = WORD_Q.toLowerCase();
+    rows = rows.filter(function(r){ return (r.w + ' ' + r.tr).toLowerCase().indexOf(q) > -1; });
+  }
+  if(WORD_SORT === 'az')          rows.sort(function(a,b){ return a.w.localeCompare(b.w); });
+  else if(WORD_SORT === 'wrong')  rows.sort(function(a,b){ return b.wrong - a.wrong || a.box - b.box || a.w.localeCompare(b.w); });
+  else                            rows.sort(function(a,b){ return a.box - b.box || b.wrong - a.wrong || a.w.localeCompare(b.w); });
+
+  const chip = function(id, label, n){
+    return '<button class="wchip' + (WORD_FILTER === id ? ' on' : '') + '" onclick="setWordFilter(\'' + id + '\')">' +
+           label + ' <b>' + n + '</b></button>';
+  };
+  const sortBtn = function(id, label){
+    return '<button class="wsort' + (WORD_SORT === id ? ' on' : '') + '" onclick="setWordSort(\'' + id + '\')">' + label + '</button>';
+  };
+
+  return `<div style="margin-top:14px">
+    <div class="wchips">
+      ${chip('all','All',counts.all)}
+      ${chip('weak','Shaky',counts.weak)}
+      ${chip('mid','Getting there',counts.mid)}
+      ${chip('solid','Solid',counts.solid)}
+      ${chip('new','Not started',counts['new'])}
+    </div>
+    <div class="wtools">
+      <input type="text" id="wq" placeholder="Find a word…" value="${esc(WORD_Q)}" oninput="onWordSearch(this.value)">
+      <div class="wsorts">${sortBtn('weak','Weakest')}${sortBtn('wrong','Most wrong')}${sortBtn('az','A–Z')}</div>
+    </div>
+    ${ rows.length ? '<div class="wlist">' + rows.map(function(r){
+        return '<div class="row"><div style="min-width:0"><div class="w">' + esc(r.w) + '</div>' +
+          '<div class="t">' + esc(r.tr) +
+          (r.seen ? ' · ' + r.wrong + ' wrong / ' + r.seen + ' tries · ' + r.pct + '%' : ' · not started') +
+          '</div></div>' +
+          '<div class="sp"><div class="dots">' +
+          [1,2,3,4,5].map(function(i){ return '<div class="dot ' + (r.box >= i ? 'on' : '') + '"></div>'; }).join('') +
+          '</div></div></div>';
+      }).join('') + '</div>'
+      : '<div class="empty">Nothing matches that.</div>' }
+    <div class="note" style="margin-top:8px">Five dots means it has survived a month of gaps. Anything on one or two dots is worth a minute in the lesson.</div>
+  </div>`;
 }
 
 function rowHTML(a){
