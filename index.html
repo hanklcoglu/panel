@@ -144,6 +144,22 @@ async function ping(student, kind, extra){
 }
 const pushNote = n => n ? ' \u00b7 notified' : '';
 
+/* The link a student must open at least once. After that the key lives in their
+   browser — but a home-screen icon saved from the plain URL never had it. */
+function studentLink(id){
+  const s = STUDENTS.find(function(x){ return x.id === (id || cur); });
+  return s.app + '#k=' + encodeURIComponent(KEY) + '&s=' + encodeURIComponent(s.id);
+}
+async function copyLink(){
+  const url = studentLink();
+  try{
+    await navigator.clipboard.writeText(url);
+    say('ok', 'Link copied. They must open this exact link once — a plain bookmark will not sync.');
+  }catch(e){
+    window.prompt('Copy this link and send it to them:', url);
+  }
+}
+
 /* ---------------- helpers ---------------- */
 const esc = s => String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const $ = id => document.getElementById(id);
@@ -274,7 +290,8 @@ function render(){
     </div>
 
     <div>
-      <h2>Progress</h2>
+      <h2>Progress <button class="btn ghost sm" style="float:right;margin-top:-4px"
+        onclick="copyLink()">Copy their link</button></h2>
       <div class="card">
         ${pr ? `
           ${staleHTML(pr)}
